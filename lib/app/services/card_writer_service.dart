@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+
 import 'dart:typed_data';
 import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
 import 'package:convert/convert.dart';
@@ -9,34 +11,72 @@ final Uint8List TRANSPORT_KEY = Uint8List.fromList([0xFF, 0xFF, 0xFF, 0xFF, 0xFF
 // Access bits
 final Uint8List ACCESS_BITS = Uint8List.fromList([0xFF, 0x07, 0x80, 0x69]);
 
-class CardWriter {
+class CardWriterService {
   final Uint8List manufacturerKey;
   final Uint8List lockSecretKey;
 
-  CardWriter({required this.manufacturerKey, required this.lockSecretKey});
+  CardWriterService({required this.manufacturerKey, required this.lockSecretKey});
 
+  // -----------------------------------------------------------------------
+  // NEW: Write a guest card (two independent sectors)
+  // -----------------------------------------------------------------------
+  Future<void> writeGuestCard({
+    required String uidHex,
+    required Uint8List sector1Data, // plaintext, up to 48 bytes
+    required Uint8List sector2Data, // plaintext, up to 48 bytes
+  }) async {
+    print("📱 Writing guest card to UID: $uidHex");
+
+    // Guest card uses the lock secret key
+    Uint8List aesKey = lockSecretKey;
+    Uint8List iv = LockCrypto.buildCardIV(uidHex);
+
+    // Pad both payloads to exactly 48 bytes (3 blocks)
+    Uint8List paddedSector1 = _padTo48(sector1Data);
+    Uint8List paddedSector2 = _padTo48(sector2Data);
+
+    // Encrypt both payloads (AES‑CBC)
+    Uint8List ciphertext1 = LockCrypto.aesCbcEncrypt(aesKey, iv, paddedSector1);
+    Uint8List ciphertext2 = LockCrypto.aesCbcEncrypt(aesKey, iv, paddedSector2);
+
+    print("🔒 Encrypted Sector 1 (48 bytes): ${hex.encode(ciphertext1)}");
+    print("🔒 Encrypted Sector 2 (48 bytes): ${hex.encode(ciphertext2)}");
+
+    // Derive Mifare Key A for sectors 1 and 2
+    Uint8List keyA1 = LockCrypto.deriveMifareKeyA(aesKey, 1);
+    Uint8List keyA2 = LockCrypto.deriveMifareKeyA(aesKey, 2);
+
+    // Write Sector 1 (blocks 4,5,6 + trailer block 7)
+    await _writeSingleSector(sector: 1, derivedKey: keyA1, ciphertext: ciphertext1, physicalStartBlock: 4);
+
+    // Write Sector 2 (blocks 8,9,10 + trailer block 11)
+    await _writeSingleSector(sector: 2, derivedKey: keyA2, ciphertext: ciphertext2, physicalStartBlock: 8);
+
+    print("✅ Guest card written successfully!");
+  }
+
+  // -----------------------------------------------------------------------
+  // Original method (writes a single payload that may span sectors)
+  // -----------------------------------------------------------------------
   Future<void> writeApplicationCard({required int cardType, required Uint8List payload, required String uidHex}) async {
     print("📱 Writing to UID: $uidHex");
 
-    // 1. Determine AES key
     bool useLockSecret = _cardUsesLockSecret(cardType);
     Uint8List aesKey = useLockSecret ? lockSecretKey : manufacturerKey;
     print("🔑 Using ${useLockSecret ? 'Lock Secret' : 'Manufacturer'} key");
 
-    // 2. Build IV and encrypt payload
     Uint8List iv = LockCrypto.buildCardIV(uidHex);
     Uint8List paddedPayload = LockCrypto.zeroPad(payload);
     int numBlocks = paddedPayload.length ~/ 16;
     Uint8List ciphertext = LockCrypto.aesCbcEncrypt(aesKey, iv, paddedPayload);
     print("🔒 Encrypted ${payload.length} bytes → ${ciphertext.length} bytes ($numBlocks blocks)");
 
-    // 3. Derive Mifare keys
     Uint8List keyaS1 = LockCrypto.deriveMifareKeyA(aesKey, 1);
     Uint8List keyaS2 = LockCrypto.deriveMifareKeyA(aesKey, 2);
     print("🔐 Derived KeyA S1: ${hex.encode(keyaS1).toUpperCase()}");
     print("🔐 Derived KeyA S2: ${hex.encode(keyaS2).toUpperCase()}");
 
-    // 4. Write sector 1
+    // Write sector 1
     await _writeSectorData(
       sector: 1,
       derivedKey: keyaS1,
@@ -46,7 +86,7 @@ class CardWriter {
       physicalStartBlock: 4,
     );
 
-    // 5. Write sector 2 if needed
+    // Write sector 2 if needed
     if (numBlocks > 3) {
       await _writeSectorData(
         sector: 2,
@@ -62,7 +102,47 @@ class CardWriter {
   }
 
   // -----------------------------------------------------------------------
-  // Write a single sector (data blocks + trailer)
+  // Helper: pad a Uint8List to exactly 48 bytes with zeros
+  // -----------------------------------------------------------------------
+  Uint8List _padTo48(Uint8List data) {
+    if (data.length >= 48) return data.sublist(0, 48);
+    final padded = Uint8List(48);
+    padded.setRange(0, data.length, data);
+    return padded;
+  }
+
+  // -----------------------------------------------------------------------
+  // Write a single sector's 3 data blocks + trailer
+  // -----------------------------------------------------------------------
+  Future<void> _writeSingleSector({
+    required int sector,
+    required Uint8List derivedKey,
+    required Uint8List ciphertext, // must be exactly 48 bytes
+    required int physicalStartBlock,
+  }) async {
+    if (ciphertext.length != 48) {
+      throw Exception("Ciphertext must be exactly 48 bytes for a single sector");
+    }
+
+    // Authenticate
+    await _authenticateSectorWithFallback(sector, derivedKey);
+
+    // Write the 3 data blocks
+    for (int i = 0; i < 3; i++) {
+      int blockNum = physicalStartBlock + i;
+      Uint8List blockData = ciphertext.sublist(i * 16, (i + 1) * 16);
+      await FlutterNfcKit.writeBlock(blockNum, blockData);
+      print("  ✍️ Block $blockNum: ${hex.encode(blockData).toUpperCase()}");
+    }
+
+    // Write trailer block
+    int trailerBlock = sector * 4 + 3;
+    await _writeSectorTrailerBlock(trailerBlock, derivedKey);
+    print("  🔒 Trailer block $trailerBlock written");
+  }
+
+  // -----------------------------------------------------------------------
+  // Legacy helper (kept for writeApplicationCard)
   // -----------------------------------------------------------------------
   Future<void> _writeSectorData({
     required int sector,
@@ -72,13 +152,11 @@ class CardWriter {
     required int maxDataBlocks,
     required int physicalStartBlock,
   }) async {
-    // Authenticate with fallback
     await _authenticateSectorWithFallback(sector, derivedKey);
 
     int numBlocksToWrite = ((blocks.length ~/ 16) - startBlock).clamp(0, maxDataBlocks);
     print("📝 Writing $numBlocksToWrite blocks to sector $sector");
 
-    // Write data blocks using plugin's writeBlock
     for (int i = 0; i < numBlocksToWrite; i++) {
       int blockIdx = startBlock + i;
       Uint8List blockData = blocks.sublist(blockIdx * 16, (blockIdx + 1) * 16);
@@ -86,23 +164,20 @@ class CardWriter {
       print("  ✍️ Block ${physicalStartBlock + i}: ${hex.encode(blockData).toUpperCase()}");
     }
 
-    // Zero-fill remaining data blocks in this sector
     for (int i = numBlocksToWrite; i < maxDataBlocks; i++) {
       await FlutterNfcKit.writeBlock(physicalStartBlock + i, Uint8List(16));
       print("  🧹 Zeroed block ${physicalStartBlock + i}");
     }
 
-    // Write trailer
     int trailerBlock = sector * 4 + 3;
     await _writeSectorTrailerBlock(trailerBlock, derivedKey);
     print("  🔒 Trailer block $trailerBlock written");
   }
 
   // -----------------------------------------------------------------------
-  // Authenticate: try derived key, fallback to transport key
+  // Authenticate with fallback to transport key
   // -----------------------------------------------------------------------
   Future<void> _authenticateSectorWithFallback(int sector, Uint8List derivedKey) async {
-    // Try derived key first
     bool authSuccess = false;
     try {
       authSuccess = await FlutterNfcKit.authenticateSector(sector, keyA: derivedKey);
@@ -114,7 +189,6 @@ class CardWriter {
       print("⚠️ Derived key exception for sector $sector: $e");
     }
 
-    // Fallback to transport key
     try {
       authSuccess = await FlutterNfcKit.authenticateSector(sector, keyA: TRANSPORT_KEY);
       if (authSuccess) {
@@ -129,7 +203,7 @@ class CardWriter {
   }
 
   // -----------------------------------------------------------------------
-  // Write sector trailer using plugin's writeBlock
+  // Write sector trailer block (Key A, access bits, Key B)
   // -----------------------------------------------------------------------
   Future<void> _writeSectorTrailerBlock(int blockNumber, Uint8List newKeyA) async {
     Uint8List trailer = Uint8List(16);

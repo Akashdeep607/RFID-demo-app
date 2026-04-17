@@ -11,6 +11,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'NFC Card Tool',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)),
       home: const HomeScreen(),
     );
