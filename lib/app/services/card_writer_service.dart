@@ -43,9 +43,8 @@ class CardWriterService {
     print("🔒 Encrypted Sector 2 (48 bytes): ${hex.encode(ciphertext2)}");
 
     // Derive Mifare Key A for sectors 1 and 2
-    Uint8List keyA1 = LockCrypto.deriveMifareKeyA(aesKey, 1);
-    Uint8List keyA2 = LockCrypto.deriveMifareKeyA(aesKey, 2);
-
+    Uint8List keyA1 = LockCrypto.deriveMifareKeyA(aesKey, 0x01);
+    Uint8List keyA2 = LockCrypto.deriveMifareKeyA(aesKey, 0x02);
     // Write Sector 1 (blocks 4,5,6 + trailer block 7)
     await _writeSingleSector(sector: 1, derivedKey: keyA1, ciphertext: ciphertext1, physicalStartBlock: 4);
 
@@ -182,7 +181,7 @@ class CardWriterService {
     try {
       authSuccess = await FlutterNfcKit.authenticateSector(sector, keyA: derivedKey);
       if (authSuccess) {
-        print("✅ Auth sector $sector with derived key OK");
+        print("✅ Auth sector $sector with ${hex.encode(derivedKey)} derived key OK");
         return;
       }
     } catch (e) {
@@ -210,6 +209,7 @@ class CardWriterService {
     trailer.setRange(0, 6, newKeyA);
     trailer.setRange(6, 10, ACCESS_BITS);
     trailer.setRange(10, 16, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); // Key B
+    // print("S$blockNumber KeyA - ${hex.encode(newKeyA)} || S$blockNumber KeyA - ${hex.encode(newKeyA)}");
     await FlutterNfcKit.writeBlock(blockNumber, trailer);
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
 import 'package:intl/intl.dart';
 import 'package:convert/convert.dart';
 import 'package:rfid/app/services/card_writer_service.dart';
+import 'package:rfid/app/services/lock_crypto.dart';
 
 class WriteCardScreen extends StatefulWidget {
   const WriteCardScreen({super.key});
@@ -34,7 +35,11 @@ class _WriteCardScreenState extends State<WriteCardScreen> {
 
   // Keys (hardcoded for demo – replace with secure storage)
   final Uint8List _manufacturerKey = Uint8List.fromList(hex.decode('00112233445566778899AABBCCDDEEFF'));
-  final Uint8List _lockSecretKey = Uint8List.fromList(hex.decode('E8A763CD2BBB99542D5EB1F8A4ADE54C'));
+
+  // final Uint8List bleMac = Uint8List.fromList([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+  final String bleMac = '14:E9:F0:84:A9:45';
+
+  late Uint8List _lockSecretKey;
 
   @override
   void initState() {
@@ -42,6 +47,11 @@ class _WriteCardScreenState extends State<WriteCardScreen> {
     _validFrom = DateTime.now();
     _validTo = DateTime.now().add(const Duration(days: 30));
     _updateDateControllers();
+    _lockSecretKey = LockCrypto.deriveLockSecret(_manufacturerKey, bleMac);
+
+    print(
+      _lockSecretKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join().toUpperCase(),
+    ); //or logs, APIs, manual verification
   }
 
   void _updateDateControllers() {

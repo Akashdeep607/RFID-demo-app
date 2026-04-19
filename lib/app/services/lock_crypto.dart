@@ -5,12 +5,41 @@ import 'package:convert/convert.dart';
 
 class LockCrypto {
   // Derive Lock Secret from Manufacturer Key + BLE MAC
-  static Uint8List deriveLockSecret(Uint8List mfgKey, Uint8List bleMac) {
+  // static Uint8List deriveLockSecret(Uint8List mfgKey, Uint8List bleMac) {
+  //   final input = Uint8List(22)
+  //     ..setRange(0, 16, mfgKey)
+  //     ..setRange(16, 22, bleMac);
+  //   final digest = sha256.convert(input);
+  //   print("$digest");
+  //   return Uint8List.fromList(digest.bytes.sublist(0, 16));
+  // }
+
+  static Uint8List deriveLockSecret(Uint8List manufacturerKey, String bleMac) {
+    if (manufacturerKey.length != 16) {
+      throw ArgumentError('Manufacturer key must be 16 bytes');
+    }
+
+    // Step 1: Parse MAC and reverse (little-endian)
+    final macBytes = bleMac
+        .split(':')
+        .map((e) => int.parse(e, radix: 16))
+        .toList()
+        .reversed
+        .toList(); // IMPORTANT: reverse
+    if (macBytes.length != 6) {
+      throw ArgumentError('Invalid BLE MAC');
+    }
+
+    // Step 2: Concatenate ManufacturerKey + MAC
     final input = Uint8List(22)
-      ..setRange(0, 16, mfgKey)
-      ..setRange(16, 22, bleMac);
-    final digest = sha256.convert(input);
-    return Uint8List.fromList(digest.bytes.sublist(0, 16));
+      ..setRange(0, 16, manufacturerKey)
+      ..setRange(16, 22, macBytes);
+
+    // Step 3: SHA-256
+    final hash = sha256.convert(input).bytes;
+
+    // Step 4: Take first 16 bytes
+    return Uint8List.fromList(hash.sublist(0, 16));
   }
 
   // Derive Mifare Key A from AES key and sector number

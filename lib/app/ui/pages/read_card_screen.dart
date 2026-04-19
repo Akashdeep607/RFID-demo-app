@@ -7,7 +7,8 @@ import 'package:rfid/app/services/card_parser_service.dart';
 
 final Uint8List TRANSPORT_KEY = Uint8List.fromList([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
 final Uint8List _manufacturerKey = Uint8List.fromList(hex.decode('00112233445566778899AABBCCDDEEFF'));
-final Uint8List _lockSecretKey = Uint8List.fromList(hex.decode('E8A763CD2BBB99542D5EB1F8A4ADE54C'));
+final String bleMac = "14:E9:F0:84:A9:45";
+late Uint8List _lockSecretKey;
 
 class ReadCardScreen extends StatefulWidget {
   const ReadCardScreen({super.key});
@@ -23,9 +24,10 @@ class _ReadCardScreenState extends State<ReadCardScreen> {
 
   // Try all possible keys for a sector
   Future<bool> _authenticateSector(int sector) async {
+    _lockSecretKey = LockCrypto.deriveLockSecret(_manufacturerKey, bleMac);
     final keysToTry = <Uint8List>[
-      LockCrypto.deriveMifareKeyA(_manufacturerKey, sector),
-      LockCrypto.deriveMifareKeyA(_lockSecretKey, sector),
+      LockCrypto.deriveMifareKeyA(_manufacturerKey, sector), //Authenticate MFG Sectors
+      LockCrypto.deriveMifareKeyA(_lockSecretKey, sector), // Authenticate LS Sectors
       TRANSPORT_KEY,
     ];
     for (final key in keysToTry) {
@@ -39,6 +41,7 @@ class _ReadCardScreenState extends State<ReadCardScreen> {
         // Continue to next key
       }
     }
+
     return false;
   }
 
@@ -109,7 +112,27 @@ class _ReadCardScreenState extends State<ReadCardScreen> {
         buffer.writeln('--- Sector 2 ---\n⚠️ Authentication failed – cannot read');
       }
       buffer.writeln();
+      // print('UID: $uid\n');
 
+      // print('--- Sector 1 ---');
+      // print('Block 4: ${hex.encode(b4).toUpperCase()}');
+      // print('Block 5: ${hex.encode(b5).toUpperCase()}');
+      // print('Block 6: ${hex.encode(b6).toUpperCase()}');
+      // print('Block 7 (trailer): ${hex.encode(b7).toUpperCase()}');
+      // print('');
+
+      // if (auth2 && b8 != null) {
+      //   print('--- Sector 2 ---');
+      //   print('Block 8:  ${hex.encode(b8).toUpperCase()}');
+      //   print('Block 9:  ${hex.encode(b9!).toUpperCase()}');
+      //   print('Block 10: ${hex.encode(b10!).toUpperCase()}');
+      //   print('Block 11 (trailer): ${hex.encode(b11!).toUpperCase()}');
+      // } else {
+      //   print('--- Sector 2 ---');
+      //   print('⚠️ Authentication failed – cannot read');
+      // }
+
+      // print('');
       // ---- Decrypt & parse (using existing parser service) ----
       final sector1Data = Uint8List(48)
         ..setRange(0, 16, b4)
